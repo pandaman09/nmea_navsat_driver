@@ -100,7 +100,7 @@ tuple of tuples where each tuple is a field name, conversion function and index
 into the split sentence"""
 parse_maps = {
     "GGA": [
-        ("fix_type", int, 6),
+        ("fix_type", safe_int, 6),
         ("latitude", convert_latitude, 2),
         ("latitude_direction", str, 3),
         ("longitude", convert_longitude, 4),
@@ -111,6 +111,34 @@ parse_maps = {
         ("num_satellites", safe_int, 7),
         ("utc_time", convert_time, 1),
         ],
+    "VTG": [
+        ("speed_knots", safe_float, 5),
+        ("speed_kph", safe_float, 7),
+        ("mode", str, 9),
+        ],
+#    "GST": [
+# GST data contains error information
+#    ],
+    "PJT": [
+        #Trimble proprietary
+        ("coordinate_system", str, 1),
+        ("project_name", str, 2)
+        ],
+    "AVR": [
+        ("yaw", safe_float, 2),
+        ("pitch", safe_float, 4),
+        ("roll", safe_float, 6),
+        ("fix_type", safe_int, 9),
+        ("PDOP", safe_int, 20),
+        ("num_satellites", safe_int, 11),
+        ],
+    "HDT": [
+        ("heading_north", safe_float, 1)
+        ],
+    "ROT": [
+        ("rate",safe_int, 1),
+        ("validity", str, 2),
+        ],
     "RMC": [
         ("utc_time", convert_time, 1),
         ("fix_valid", convert_status_flag, 2),
@@ -120,20 +148,49 @@ parse_maps = {
         ("longitude_direction", str, 6),
         ("speed", convert_knots_to_mps, 7),
         ("true_course", convert_deg_to_rads, 8),
+        ],
+#    "DG": [
+# DG contains L-Band corrections and beacon signal strength
+#        ],
+#    "GBS": [
+# GBS data contains expected error in various data
+#        ],
+#    "GNS": [
+# GNS data contains less accurate long,lat, mode indicator, HDOP, MSL, geoidal separation, age of data
+#        ],
+    "LLQ": [
+        ("easting", safe_float, 3),
+        ("northing", safe_float, 5),
+        ("fix_type", safe_int, 7),
+        ("position_quality", safe_float, 9),
+        ("height", safe_float, 10),
+        ("utc_time", convert_time, 1),
         ]
     }
 
 
 def parse_nmea_sentence(nmea_sentence):
     # Check for a valid nmea sentence
-    if not re.match('(^\$GP|^\$GN|^\$GL).*\*[0-9A-Fa-f]{2}$', nmea_sentence):
+    # Added PTNL for trimble proprietary messages
+    if not re.match('^\$(GP|GN|PTNL).*\*[0-9A-Fa-f]{2}$', nmea_sentence):
         logger.debug("Regex didn't match, sentence not valid NMEA? Sentence was: %s"
                      % repr(nmea_sentence))
         return False
     fields = [field.strip(',') for field in nmea_sentence.split(',')]
-
-    # Ignore the $ and talker ID portions (e.g. GP)
-    sentence_type = fields[0][3:]
+    #Check if nmea sentence contains trimble proprietary message
+    sentence_type = ""
+#   trimble_msg = False
+    if re.match('^\$(PTNL).*\*[0-9A-Fa-f]{2}$', nmea_sentence):
+#       trimble_msg = True
+        if fields[0].find("PTNLDG") :
+            #DG message type isn't comma seperated on trimble BD9xx reciever
+            sentence_type = "DG"
+        else:
+            #Ignore the $ and talker ID portion "PTNL"
+            sentence_type = fields[0][5:]
+    else:
+      # Ignore the $ and talker ID portions (e.g. GP)
+      sentence_type = fields[0][3:]
 
     if not sentence_type in parse_maps:
         logger.debug("Sentence type %s not in parse map, ignoring."
@@ -145,5 +202,4 @@ def parse_nmea_sentence(nmea_sentence):
     parsed_sentence = {}
     for entry in parse_map:
         parsed_sentence[entry[0]] = entry[1](fields[entry[2]])
-
     return {sentence_type: parsed_sentence}

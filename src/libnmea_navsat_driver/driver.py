@@ -35,7 +35,8 @@ import math
 import rospy
 
 from sensor_msgs.msg import NavSatFix, NavSatStatus, TimeReference
-from geometry_msgs.msg import TwistStamped
+from geometry_msgs.msg import TwistStamped, Vector3Stamped
+from std_msgs.msg import Float32
 
 from libnmea_navsat_driver.checksum_utils import check_nmea_checksum
 import libnmea_navsat_driver.parser
@@ -44,7 +45,12 @@ import libnmea_navsat_driver.parser
 class RosNMEADriver(object):
     def __init__(self):
         self.fix_pub = rospy.Publisher('fix', NavSatFix, queue_size=1)
-        self.vel_pub = rospy.Publisher('vel', TwistStamped, queue_size=1)
+        self.vel_pub = rospy.Publisher('vel', Vector3Stamped, queue_size=1)
+        self.vel_pub2 = rospy.Publisher('vel_local', TwistStamped, queue_size=1)
+        self.hdt_pub = rospy.Publisher('hdt', Float32, queue_size=1)
+        self.rot_pub = rospy.Publisher('rot', TwistStamped, queue_size=1)
+        self.speed_pub = rospy.Publisher('speed', TwistStamped, queue_size=1)
+        self.pyr_pub = rospy.Publisher('pyr', TwistStamped, queue_size=1)
         self.time_ref_pub = rospy.Publisher('time_reference', TimeReference, queue_size=1)
 
         self.time_ref_source = rospy.get_param('~time_ref_source', None)
@@ -57,8 +63,8 @@ class RosNMEADriver(object):
             rospy.logwarn("Received a sentence with an invalid checksum. " +
                           "Sentence was: %s" % repr(nmea_string))
             return False
-
         parsed_sentence = libnmea_navsat_driver.parser.parse_nmea_sentence(nmea_string)
+        
         if not parsed_sentence:
             rospy.logdebug("Failed to parse NMEA sentence. Sentece was: %s" % nmea_string)
             return False
@@ -161,14 +167,47 @@ class RosNMEADriver(object):
 
             # Publish velocity from RMC regardless, since GGA doesn't provide it.
             if data['fix_valid']:
-                current_vel = TwistStamped()
-                current_vel.header.stamp = current_time
-                current_vel.header.frame_id = frame_id
-                current_vel.twist.linear.x = data['speed'] * \
+                current_vel_global = Vector3Stamped()
+                current_vel_global.header.stamp = current_time
+                current_vel_global.header.frame_id = frame_id
+                current_vel_global.vector.x = data['speed'] * \
                     math.sin(data['true_course'])
-                current_vel.twist.linear.y = data['speed'] * \
+                current_vel_global.vector.y = data['speed'] * \
                     math.cos(data['true_course'])
-                self.vel_pub.publish(current_vel)
+                self.vel_pub.publish(current_vel_global)
+                current_vel_local  = TwistStamped()
+                current_vel_local.header.stamp = current_time
+                current_vel_local.header.frame_id = frame_id
+                current_vel_local.twist.linear.x = data['speed']
+                self.vel_pub2.publish(current_vel_local)
+        elif 'HDT' in parsed_sentence:
+            data = parsed_sentence['HDT']
+            if data['heading_north']:
+              self.hdt_pub.publish(data['heading_north'])
+        elif 'ROT' in parsed_sentence:
+            data = parsed_sentence['ROT']
+            current_rot = TwistStamped()
+            current_rot.header.stamp = current_time
+            current_rot.header.frame_id = frame_id
+            current_rot.twist.angular.z = data['rate']*3.14/180*60
+            self.rot_pub.publish(current_rot)
+        elif 'VTG' in parsed_sentence:
+            data = parsed_sentence['VTG']
+            current_speed = TwistStamped()
+            current_speed.header.stamp = current_time
+            current_speed.header.frame_id = frame_id
+            current_speed.twist.linear.x = data['speed_kph']/360*1000
+            self.speed_pub.publish(current_speed)
+        elif 'AVR' in parsed_sentence:
+            data = parsed_sentence['AVR']
+            current_pyr = TwistStamped()
+            current_pyr.header.stamp = current_timecur
+            current_pyr.header.frame_id = frame_id
+            current_pyr.twist.angular.z = data['yaw']
+            current_pyr.twist.angular.y = data['pitch']
+            current_pyr.twist.angular.x = data['roll']
+            if data['fix_type'] > 0:
+                self.pyr_pub.publish(current_pyr)
         else:
             return False
 
